@@ -1,3 +1,9 @@
+import math
+import re
+from collections import Counter
+from random import choices
+
+
 class Spell_Checker:
     """The class implements a context sensitive spell checker. The corrections
         are done in the Noisy Channel framework, based on a language model and
@@ -12,6 +18,8 @@ class Spell_Checker:
         Args:
             lm: a language model object. Defaults to None
         """
+        self.lm = lm
+        self.error_tables = None
 
     def build_model(self, text, n=3):
         """Returns a language model object built on the specified text. The language
@@ -25,6 +33,9 @@ class Spell_Checker:
             Returns:
                 A language model object
         """
+        lm = Ngram_Language_Model(n=n, chars=False)
+        lm.build_model(text)
+        return lm
 
     def add_language_model(self, lm):
         """Adds the specified language model as an instance variable.
@@ -33,6 +44,7 @@ class Spell_Checker:
             Args:
                 lm: a language model object
         """
+        self.lm = lm
 
     def learn_error_tables(self, errors_file):
         """Returns a nested dictionary {str:dict} where str is in:
@@ -67,9 +79,9 @@ class Spell_Checker:
                 error_tables (dict): a dictionary of error tables in the format
                 returned by  learn_error_tables()
         """
+        self.error_tables = error_tables
 
-
-    def evaluate(self,text):
+    def evaluate(self, text):
         """Returns the log-likelihod of the specified text given the language
             model in use. Smoothing is applied on texts containing OOV words
 
@@ -79,10 +91,11 @@ class Spell_Checker:
            Returns:
                Float. The float should reflect the (log) probability.
         """
+        return self.lm.evaluate()
 
     def spell_check(self, text, alpha):
         """ Returns the most probable fix for the specified text. Use a simple
-            noisy channel model is the number of tokens in the specified text is
+            noisy channel model if the number of tokens in the specified text is
             smaller than the length (n) of the language model.
 
             Args:
@@ -93,9 +106,550 @@ class Spell_Checker:
                 A modified string (or a copy of the original if no corrections are made.)
         """
 
+    def get_all_edits(self, word):
+        """ Returns all of the possible edits that are in maximum 2-edit distance from the original word.
 
-def who_am_i(): #this is not a class method
+            Args:
+                word (str): the word to get edits of.
+
+            Return:
+                set. All of the possible edits that are in maximum 2-edit distance from the original word.
+                The format of the edit shall be a tuple of: (edited_word, prob),
+                where prob is the probability of this error to occur.
+                Note:
+                    this set will contain only real words from the language-model's dictionary.
+        """
+        edits1 = self.edits1(word)
+        all_edits = self.edits2(edits1)
+        return self.check_if_real_word(all_edits)
+
+    def check_if_real_word(self, all_edits):
+        raise Exception("Need to complete this function.")
+
+    def edits1(self, word):
+        """ Returns all of the possible edits that are in 1-edit distance from the original word.
+
+            Args:
+                word (str): the word to get edits of.
+
+            Return:
+                set. All of the possible edits that are in 1-edit distance from the original word.
+                The format of the edit shall be a tuple of: (edited_word, prob),
+                where prob is the probability of this error to occur.
+        """
+        letters = 'abcdefghijklmnopqrstuvwxyz'
+        splits = [(word[:i], word[i:]) for i in range(len(word) + 1)]
+
+        insertions = [self.get_insertion(L, R) for L, R in splits if R]
+        deletions = [self.get_deletion(L, R, c) for L, R in splits for c in letters]
+        substitutions = [self.get_substitution(L, R, c) for L, R in splits if R for c in letters]
+        transpositions = [self.get_transposition(L, R) for L, R in splits if len(R) > 1]
+
+        all_edits1 = set(insertions + deletions + substitutions + transpositions)
+        only_best_prob_edits = self.get_only_best_prob_edits(all_edits1)
+        return only_best_prob_edits
+
+    def edits2(self, edits1):
+        """ Returns all of the possible edits that are in a distance of maximum 2-edit distance from the original word.
+
+            Args:
+                edits1 (set): the set of 1-edit-distance words, to make another edit distance of.
+                    Each entry in the set is a tuple of: (edited_word, prob), as returned in the function self.edits1.
+
+            Return:
+                set. All of the possible edits that are in maximum 2-edit distance from the original word.
+                The format of the edit shall be a tuple of: (edited_word, prob),
+                where prob is the probability of this error to occur.
+                Note:
+                    this set shall contain both types of edits, 1-edit distance and 2-edit distance.
+        """
+        all_edits2 = set((e2, prob1 * prob2) for e1, prob1 in edits1 for e2, prob2 in self.edits1(e1))
+        # Take all edits into consideration:
+        all_edits = edits1.union(all_edits2)
+        only_best_prob_edits = self.get_only_best_prob_edits(all_edits)
+        return only_best_prob_edits
+
+    def get_insertion(self, L, R):
+        """ Returns an insertion edit at the specified split
+
+            Args:
+                L (str): the left side of the word.
+                R (str): the right side of the word.
+                    R must have at least one letter in it (handled in the calling function).
+
+            Return:
+                A tuple in the following format: (edited_word, prob),
+                where edited_word is the word created by this edit,
+                and prob is the probability of this edit to occur.
+        """
+        if L:
+            # if the left side of the word has at least one letter in it, take the last one in it:
+            edit_entry = L[-1] + R[0]
+        else:
+            # else, it is an insertion at the start of the word, so add a # sign to represent it:
+            edit_entry = '#' + R[0]
+        return L + R[1:], self.get_prob_insertion(edit_entry)
+
+    def get_deletion(self, L, R, c):
+        """ Returns a deletion edit at the specified split and the specified deleted letter
+
+            Args:
+                L (str): the left side of the word.
+                R (str): the right side of the word.
+                c (char): the deleted letter from the word, which we want to add now.
+
+            Return:
+                A tuple in the following format: (edited_word, prob),
+                where edited_word is the word created by this edit,
+                and prob is the probability of this edit to occur.
+        """
+        if L:
+            # if the left side of the word has at least one letter in it, take the last one in it:
+            edit_entry = L[-1] + c
+        else:
+            # else, it is a deletion at the start of the word, so add a # sign to represent it:
+            edit_entry = '#' + c
+        return L + c + R, self.get_prob_deletion(edit_entry)
+
+    def get_substitution(self, L, R, c):
+        """ Returns a substitution edit at the specified split and the specified substituted letter
+
+            Args:
+                L (str): the left side of the word.
+                R (str): the right side of the word.
+                    R must have at least one letter in it (handled in the calling function).
+                c (char): the substituted letter from the word, which we want to add now.
+
+            Return:
+                A tuple in the following format: (edited_word, prob),
+                where edited_word is the word created by this edit,
+                and prob is the probability of this edit to occur.
+        """
+        edit_entry = c + R[0]
+        return L + c + R[1:], self.get_prob_substitution(edit_entry)
+
+    def get_transposition(self, L, R):
+        """ Returns a transposition edit at the specified split
+
+            Args:
+                L (str): the left side of the word.
+                R (str): the right side of the word.
+                    R must have at least two letters in it (handled in the calling function).
+
+            Return:
+                A tuple in the following format: (edited_word, prob),
+                where edited_word is the word created by this edit,
+                and prob is the probability of this edit to occur.
+        """
+        edit_entry = R[1] + R[0]
+        return L + R[1] + R[0] + R[2:], self.get_prob_transposition(edit_entry)
+
+    def get_prob_insertion(self, edit_entry):
+        """ Returns the probability for an insertion error to occur.
+
+            Args:
+                edit_entry (str): the exact error that has occurred (two letters that represents the edit)
+
+            Return:
+                float. The probability of the error to occur.
+        """
+        return self.get_prob_edit('insertion', edit_entry)
+
+    def get_prob_deletion(self, edit_entry):
+        """ Returns the probability for a deletion error to occur.
+
+            Args:
+                edit_entry (str): the exact error that has occurred (two letters that represents the edit)
+
+            Return:
+                float. The probability of the error to occur.
+        """
+        return self.get_prob_edit('deletion', edit_entry)
+
+    def get_prob_substitution(self, edit_entry):
+        """ Returns the probability for a substitution error to occur.
+
+            Args:
+                edit_entry (str): the exact error that has occurred (two letters that represents the edit)
+
+            Return:
+                float. The probability of the error to occur.
+        """
+        return self.get_prob_edit('substitution', edit_entry)
+
+    def get_prob_transposition(self, edit_entry):
+        """ Returns the probability for a transposition error to occur.
+
+            Args:
+                edit_entry (str): the exact error that has occurred (two letters that represents the edit)
+
+            Return:
+                float. The probability of the error to occur.
+        """
+        return self.get_prob_edit('transposition', edit_entry)
+
+    def get_prob_edit(self, error_type, edit_entry):
+        """ Returns the probability for an error to occur.
+
+            Args:
+                error_type (str): the type of error that happened.
+                    Can be one of the following: ['insertion' / 'deletion' / 'substitution' / 'transposition']
+                edit_entry (str): the exact error that has occurred (two letters that represents the edit)
+
+            Return:
+                float. The probability of the error to occur.
+        """
+        raise Exception('Need to calculate the probability and not the count')
+        return self.error_tables[error_type][edit_entry]
+
+    def get_only_best_prob_edits(self, all_edits):
+        """ Keeps only the edits with the highest probability from the given set of edits
+
+            Args:
+                all_edits (set): the set of edits we want to subset from.
+
+            Return:
+                set. The subset of edits, containing only the best probability for each edited word.
+        """
+        # Create a dictionary containing the max probability found for each word in the given set:
+        only_best_prob_edits_dict = {}
+        for edit, prob in all_edits:
+            if edit not in only_best_prob_edits_dict.keys():
+                only_best_prob_edits_dict[edit] = prob
+            else:
+                if only_best_prob_edits_dict[edit] < prob:
+                    only_best_prob_edits_dict[edit] = prob
+        # Turn this dictionary to a set of tuples:
+        only_best_prob_edits_set = set((edit, prob) for edit, prob in only_best_prob_edits_dict.items())
+        return only_best_prob_edits_set
+
+
+def who_am_i():  # this is not a class method
     """Returns a ductionary with your name, id number and email. keys=['name', 'id','email']
         Make sure you return your own info!
     """
-    return {'name': 'John Doe', 'id': '012345678', 'email': 'jdoe@post.bgu.ac.il'}
+    return {'name': 'Rotem Lev Lehman', 'id': '208965814', 'email': 'levlerot@post.bgu.ac.il'}
+
+# The following class is the language model class I have submitted to ex1.
+# I am submitting it as well, because I need to use it in the build_model function:
+
+
+class Ngram_Language_Model:
+    """The class implements a Markov Language Model that learns a model from a given text.
+        It supports language generation and the evaluation of a given string.
+        The class can be applied on both word level and character level.
+    """
+
+    def __init__(self, n=3, chars=False):
+        """Initializing a language model object.
+        Args:
+            n (int): the length of the markov unit (the n of the n-gram). Defaults to 3.
+            chars (bool): True iff the model consists of ngrams of characters rather than word tokens.
+                          Defaults to False
+        """
+        self.n = n
+        self.chars = chars
+        self.ngram_counter = None  # this counter will help us for the generation of the language model
+        self.ngram_dictionary = None  # this dictionary will map from a context to the possible grams
+        self.context_counter = None  # this counter will count for each context how many times it appears
+        self.grams_set = None  # this set will hold all of the unique grams in the given text
+        self.next_gram_choosing_dict = None  # this dictionary will hold for each context, both: (1) a list of possible next grams, and (2) a list of their corresponding probabilites
+        self.all_contexts = None  # this list will hold all of the contexts in the text (for choosing the initial context)
+        self.all_contexts_probs = None  # this list will hold the probabilities of each context
+        self.ngrams_set = None  # this set will hold all unique n-grams in the given text
+        self.sum_contexts = None  # this represents the amount of total contexts in the text
+        self.num2counter_and_sum = None  # this dictionary will map from an amount of grams, to (1) a counter for this amount of grams, and to (2) the amount of the total appearances
+
+    def build_model(self, text):  # should be called build_model
+        """populates a dictionary counting all ngrams in the specified text.
+
+            Args:
+                text (str): the text to construct the model from.
+        """
+        split_text = self.get_tokens(text)
+        all_ngrams = self.get_all_ngrams(split_text, self.n)
+
+        self.num2counter_and_sum = {}
+        self.ngram_counter = Counter(all_ngrams)  # count each n-gram and see how many times it occurred in the list.
+        self.num2counter_and_sum[self.n] = self.ngram_counter
+
+        for i in range(1, self.n):
+            # for each amount of grams, get all of the i-grams and put them into the num2counter_and_sum dictionary:
+            all_i_grams = self.get_all_ngrams(split_text, i)
+            curr_counter = Counter(all_i_grams)
+            curr_sum = len(all_i_grams)
+            self.num2counter_and_sum[i] = (curr_counter, curr_sum)
+
+        self.grams_set = set(split_text)
+
+        all_n_minus1_grams = self.get_all_ngrams(split_text, self.n - 1)
+        self.context_counter = Counter(all_n_minus1_grams)
+
+        self.ngram_dictionary = {}
+        self.next_gram_choosing_dict = {}
+        self.ngrams_set = set()
+        for grams, num in self.ngram_counter.items():  # for each n-gram, map from the n-1 first grams to the last gram.
+            self.ngrams_set.add(grams)
+            context, last_gram = self.split_ngram(grams)
+
+            # add to the ngram_dictionary:
+            if context not in self.ngram_dictionary.keys():
+                self.ngram_dictionary[context] = {}
+            self.ngram_dictionary[context][last_gram] = num
+
+        for context, possible_grams in self.ngram_dictionary.items():
+            total_possibilities = sum(possible_grams.values())
+            only_grams = [x for x in possible_grams.keys()]
+            prob_dist = [possible_grams[k] / total_possibilities for k in possible_grams.keys()]
+            self.next_gram_choosing_dict[context] = (only_grams, prob_dist)
+
+        self.sum_contexts = sum(self.context_counter.values())
+        self.all_contexts = [k for (k, v) in self.context_counter.items()]
+        self.all_contexts_probs = [v / self.sum_contexts for (k, v) in self.context_counter.items()]
+
+    def get_tokens(self, text):
+        """Returns a list of tokens from the given text.
+        Tokens are split either by space or to a list of characters, depending on the value of self.chars.
+
+            Args:
+                text (str): the text we wish to tokenize.
+
+            Return:
+                List. The list of tokens.
+
+        """
+        if self.chars:
+            split_text = list(text)  # if we choose to use n-grams of characters, than we shall split each character to different list entry.
+        else:
+            split_text = text.split(' ')  # split the text by space, so each word will be in a different list entry.
+        return split_text
+
+    def get_all_ngrams(self, split_text, n):
+        """Returns a list of n-grams from the given split text.
+
+            Args:
+                split_text (list): the list of all tokens.
+
+            Return:
+                List. The list of all n-grams.
+
+        """
+        return [" ".join(split_text[i:i + n]) for i in range(len(split_text) - n + 1)]
+
+    def get_model(self):
+        """Returns the model as a dictionary of the form {ngram:count}
+        """
+        return dict(self.ngram_counter.items())
+
+    def generate(self, context=None, n=20):
+        """Returns a string of the specified length, generated by applying the language model
+        to the specified seed context. If no context is specified the context should be sampled
+        from the models' contexts distribution. Generation should stop before the n'th word if the
+        contexts are exhausted.
+
+            Args:
+                context (str): a seed context to start the generated string from. Defaults to None
+                n (int): the length of the string to be generated.
+
+            Return:
+                String. The generated text.
+
+        """
+        if context is not None:
+            normalized_context = normalize_text(context)
+            split_context = self.get_tokens(normalized_context)
+            curr_context = " ".join(split_context)
+        else:  # context is None:
+            curr_context = self.sample_initial_context()
+
+        curr_context_list = curr_context.split(' ')
+        sentence_grams = []
+        for gram in curr_context_list:
+            sentence_grams.append(gram)
+
+        if len(curr_context_list) > self.n - 1:
+            curr_context_list = curr_context_list[(len(curr_context_list) - self.n + 1):]  # if the context is longer than n-1, only proceed with the last n-1 words in the context.
+            curr_context = " ".join(curr_context_list)
+
+        if curr_context not in self.ngram_dictionary.keys():
+            # The given context does not exists:
+            curr_context = self.sample_initial_context()
+            curr_context_list = curr_context.split(' ')
+            sentence_grams = []
+            for gram in curr_context_list:
+                sentence_grams.append(gram)
+
+        while len(sentence_grams) < n:
+            # get next gram in the sentence:
+            next_gram = self.sample_next_gram(curr_context)
+            if next_gram is None:  # if we have never seen this context before, return the sentence as it is until now.
+                break
+            sentence_grams.append(next_gram)
+
+            # fix current context:
+            if self.n > 1:  # fix only if there is a point to doing so, if it is a model without contexts, than we do not need to fix it...
+                del curr_context_list[0]
+                curr_context_list.append(next_gram)
+                curr_context = " ".join(curr_context_list)
+
+        return " ".join(sentence_grams)  # create a string from the list of the grams in the sentence
+
+    def sample_initial_context(self):
+        """Samples an initial context to start a new sentence
+        """
+        return choices(self.all_contexts, self.all_contexts_probs)[0]
+
+    def sample_next_gram(self, context):
+        """Returns the next gram using the given context. We choose the next gram using sampling from a distribution.
+
+            Args:
+                context (str): the context that we want to find the next gram from.
+
+            Returns:
+                String. The next gram we chose.
+        """
+        if context not in self.next_gram_choosing_dict.keys():
+            return None  # If the context does not exist in the model, return None
+        possible_ngrams, prob_dist = self.next_gram_choosing_dict[context]
+        return choices(possible_ngrams, prob_dist)[0]
+
+    def evaluate(self, text):
+        """Returns the log-likelihod of the specified text to be generated by the model.
+           Laplace smoothing should be applied if necessary.
+
+           Args:
+               text (str): Text to ebaluate.
+
+           Returns:
+               Float. The float should reflect the (log) probability.
+        """
+        nt = normalize_text(text)
+        split_text = self.get_tokens(nt)
+        all_ngrams = self.get_all_ngrams(split_text, self.n)
+
+        # go over all ngrams, and for each ngram, calculate the probability of it appearing.
+        # multiply all of those probabilities. We can do that because of the Markov chain rule:
+        probability = 0
+        for ngram in all_ngrams:  # log(p1 * p2 * ... * pn) is equal to: log(p1) + log(p2) + ... + log(pn)
+            probability += math.log(self.get_prob(ngram))  # send the n-gram to a function that gets it's probability (or smoothed probability if it does not exist...)
+        probability += self.get_log_prob_context(split_text[:self.n - 1])
+        return probability
+
+    def get_log_prob_context(self, context_list):
+        """Returns the probability of the specified context.
+        If the context exists in the context set, than use the regular probability, else, smooth it's probability.
+
+            Args:
+                context_list (list): the context to have it's probability
+
+            Returns:
+                float. The probability.
+        """
+        log_prob = 0
+        prev_context = ''
+        for i in range(1, len(context_list) + 1):
+            curr_context = " ".join(context_list[:i])
+            curr_counter, curr_sum = self.num2counter_and_sum[i]
+            prev_amount_of_possibilities = curr_sum
+            if i > 1:
+                prev_counter, _ = self.num2counter_and_sum[i-1]
+                if prev_context in prev_counter.keys():
+                    prev_amount_of_possibilities = prev_counter[prev_context]
+
+            if curr_context in curr_counter.keys():
+                # The context exists in the text:
+                log_prob += math.log(curr_counter[curr_context] / prev_amount_of_possibilities)
+            else:
+                # The context does not exist in the text, so we need to smooth it:
+                V = len(self.grams_set)  # number of unique words (grams) in the text - vocabulary's size.
+                log_prob += math.log(1.0 / V)
+            prev_context = curr_context
+        return log_prob
+
+    def get_prob(self, ngram):
+        """Returns the probability of the specified ngram.
+        If the ngram exists in the n-grams set, than use the regular probability, else, smooth it's probability.
+
+            Args:
+                ngram (str): the ngram to have it's probability
+
+            Returns:
+                float. The probability.
+        """
+        context, last_gram = self.split_ngram(ngram)
+        if context in self.ngram_dictionary.keys() and last_gram in self.ngram_dictionary[context].keys():
+            # The ngram exists in the text:
+            return self.calc_regular_probability(ngram)
+        else:
+            # The ngram does not exist in the text, so we need to smooth it:
+            return self.smooth(ngram)
+
+    def calc_regular_probability(self, ngram):
+        """Returns the regular (non-smoothed) probability of the specified ngram.
+
+            Args:
+                ngram (str): the ngram to have it's probability
+
+            Returns:
+                float. The probability.
+        """
+        context, last_gram = self.split_ngram(ngram)
+        C_context = self.context_counter[context]
+        C_ngram = self.ngram_dictionary[context][last_gram]
+        Prob = C_ngram / C_context
+        return Prob
+
+    def smooth(self, ngram):
+        """Returns the smoothed (Laplace) probability of the specified ngram.
+
+            Args:
+                ngram (str): the ngram to have it's probability smoothed
+
+            Returns:
+                float. The smoothed probability.
+        """
+        context, last_gram = self.split_ngram(ngram)
+        V = len(self.grams_set)  # number of unique words (grams) in the text - vocabulary's size.
+        C_context = 0
+        C_ngram = 0
+        if context in self.context_counter.keys():  # if the context exists:
+            C_context = self.context_counter[context]
+        if context in self.ngram_dictionary.keys() and last_gram in self.ngram_dictionary[context].keys():  # if the ngram exists:
+            C_ngram = self.ngram_dictionary[context][last_gram]
+        P_laplace = (C_ngram + 1) / (C_context + V)  # the formula for the Laplace smoothing
+        return P_laplace
+
+    def split_ngram(self, ngram):
+        """Splits the specified ngram to it's context and last-gram.
+
+            Args:
+                ngram (str): the ngram to split
+
+            Returns:
+                Tuple. The context and the last gram
+        """
+        ngram_list = ngram.split(' ')
+        context = " ".join(ngram_list[:-1])
+        last_gram = ngram_list[-1]
+        return context, last_gram
+
+
+def normalize_text(text, lower_text=True, pad_punctuations=True):
+    """Returns a normalized string based on the specifiy string.
+       You can add default parameters as you like (they should have default values!)
+       You should explain your decitions in the header of the function.
+
+       Args:
+           text (str): the text to normalize
+           lower_text (bool): specifies if we want to lower-case the given text. Defaults to True
+           pad_punctuations (bool): specifies if we want to pad punctuations with white-spaces - which means that they will be grams. Defaults to True
+
+       Returns:
+           string. the normalized text.
+    """
+    edited_text = text
+    if lower_text:
+        edited_text = text.lower()
+    if pad_punctuations:
+        edited_text = " ".join(re.findall(r'\w+|[.,/#!$%^&*;:{}=\-_`~()\[\]]', edited_text, flags=re.VERBOSE))
+    return edited_text
