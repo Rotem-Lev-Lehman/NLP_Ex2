@@ -124,15 +124,12 @@ class Spell_Checker:
                 error_type = 'insertion'
             else:
                 # This can be either a result of substitution (x typed as y) or transposition (xy typed as yx):
-                error_type = None
-                error_entry = None
+                error_type, error_entry = self.find_substitution_or_transposition(error_word, correct_word)
             if error_type is not None:
                 if error_entry not in error_tables[error_type].keys():
                     error_tables[error_type][error_entry] = 1
                 else:
                     error_tables[error_type][error_entry] += 1
-            print(split_line)
-        raise Exception('Need to implement this function')
         return error_tables
 
     def initialize_empty_error_tables(self):
@@ -171,6 +168,8 @@ class Spell_Checker:
     def find_deletion_error(self, short_word, long_word):
         """ Finds the deleted letter from the long_word.
 
+            Note:
+                len(short_word) must be less than len(long_word).
             Args:
                 short_word (str): the shorter word which have a deleted letter.
                 long_word (str): the longer word which have all of the letters.
@@ -193,6 +192,35 @@ class Spell_Checker:
         else:
             error_entry = long_word[deletion_index - 1:deletion_index + 1]
         return error_entry
+
+    def find_substitution_or_transposition(self, error_word, correct_word):
+        """ Finds the error in the given word, and determines if it is a substitution or a transposition error.
+
+            Note:
+                len(error_word) must be equal to len(correct_word).
+            Args:
+                error_word (str): the word that has the error in it.
+                correct_word (str): the correct word.
+
+            Returns:
+                tuple. The tuple is in the form of (error_type, error_entry),
+                where error_type is in ['substitution' / 'transposition'].
+        """
+        error_type = None
+        error_entry = None
+        for i in range(len(error_word)):
+            if error_word[i] != correct_word[i]:
+                # Found the error:
+                if i + 1 < len(error_word) and error_word[i + 1] == correct_word[i] and error_word[i] == correct_word[i + 1]:
+                    # Than it is a transposition error (xy typed as yx):
+                    error_type = 'transposition'
+                    error_entry = correct_word[i:i + 2]
+                else:
+                    # This must be a substitution error (x typed as y):
+                    error_type = 'substitution'
+                    error_entry = correct_word[i] + error_word[i]
+                break
+        return error_type, error_entry
 
     def add_error_tables(self, error_tables):
         """ Adds the speficied dictionary of error tables as an instance variable.
@@ -311,6 +339,15 @@ class Spell_Checker:
         """
         only_real_words = set()
         for edited_word, prob in all_edits:
+            if ' ' in edited_word:
+                split_word = edited_word.split(' ')
+                flag_spaced_word = True
+                for word in split_word:
+                    if not word or word not in self.vocabulary:
+                        flag_spaced_word = False
+                        break
+                if flag_spaced_word:
+                    only_real_words.add((edited_word, prob))
             if edited_word and edited_word in self.vocabulary:
                 only_real_words.add((edited_word, prob))
         return only_real_words
