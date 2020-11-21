@@ -16,6 +16,7 @@ text_2 = "My family is the besg."
 text_3 = "My family is the besga."
 text_4 = "My family is the beast."
 text_5 = "My family is the bes@."
+text_6 = "This story is abouta great man"
 
 print("Starting")
 spc = ex2.Spell_Checker()
@@ -43,6 +44,8 @@ print(fixed_text)  #my family is the best .
 fixed_text = spc.spell_check(text_4, 0.95)
 print(fixed_text)  #my family is the beast .
 fixed_text = spc.spell_check(text_5, 0.95) #Not sure if in requirements
+print(fixed_text)  #my family is the bes@ .
+fixed_text = spc.spell_check(text_6, 0.95) #Not sure if in requirements
 print(fixed_text)  #my family is the bes@ .
 
 interim_2 = timeit.default_timer()
@@ -74,6 +77,8 @@ print(fixed_text)  #my family is the best .
 fixed_text = spc.spell_check(text_4, 0.95)
 print(fixed_text)  #my family is the best .
 fixed_text = spc.spell_check(text_5, 0.95) #Not sure if in requirements
+print(fixed_text)  #my family is the bes@ .
+fixed_text = spc.spell_check(text_6, 0.95) #Not sure if in requirements
 print(fixed_text)  #my family is the bes@ .
 
 stop = timeit.default_timer()

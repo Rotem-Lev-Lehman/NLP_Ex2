@@ -20,6 +20,8 @@ class Spell_Checker:
         """
         self.lm = lm
         self.error_tables = None
+        self.denominator_error_tables = None
+        self.vocabulary = None
 
     def build_model(self, text, n=3):
         """Returns a language model object built on the specified text. The language
@@ -45,6 +47,40 @@ class Spell_Checker:
                 lm: a language model object
         """
         self.lm = lm
+        self.update_vocabulary()
+        self.update_error_tables_denominator()
+
+    def update_vocabulary(self):
+        """Updates the vocabulary to be according to the language model's "get_model" function.
+            (Replaces an older vocabulary if set)
+        """
+        all_ngrams_dict = self.lm.get_model()
+        self.vocabulary = set()
+        for ngram in all_ngrams_dict.keys():
+            split_words = ngram.split(' ')
+            for word in split_words:
+                self.vocabulary.add(word)
+
+    def update_error_tables_denominator(self):
+        """Updates the denominator of the error tables to be according to the language model's "get_model" function.
+            (Replaces an older denominator table if set)
+        """
+        all_ngrams_dict = self.lm.get_model()
+        self.denominator_error_tables = {}
+        for ngram, count in all_ngrams_dict.items():
+            split_words = ngram.split(' ')
+            for word in split_words:
+                # The first letter in the word is also counted, and we check how many times a word starts with that letter:
+                prev_letter = '#'
+                for letter in word:
+                    curr_entry = prev_letter + letter
+                    # If we have not yet seen this entry before, add it to the dictionary:
+                    if curr_entry not in self.denominator_error_tables.keys():
+                        self.denominator_error_tables[curr_entry] = 0
+                    # This entry occurred at least <count> times, because this entire ngram has occurred <count> times:
+                    self.denominator_error_tables[curr_entry] += count
+                    # Update the prev letter to be this letter:
+                    prev_letter = letter
 
     def learn_error_tables(self, errors_file):
         """Returns a nested dictionary {str:dict} where str is in:
@@ -54,7 +90,7 @@ class Spell_Checker:
             row and culumn "indixes" in the relevant confusion matrix and the int is the
             observed count of such an error (computed from the specified errors file).
             Examples of such string are 'xy', for deletion of a 'y'
-            after an 'x', insertion of a 'y' after an 'x'  and substitution
+            after an 'x', insertion of a 'y' after an 'x' and substitution
             of 'x' (incorrect) by a 'y'; and example of a transposition is 'xy' indicates the characters that are transposed.
 
 
@@ -70,6 +106,93 @@ class Spell_Checker:
             Returns:
                 A dictionary of confusion "matrices" by error type (dict).
         """
+        error_tables = self.initialize_empty_error_tables()
+        with open(errors_file, 'r') as f:
+            lines = f.readlines()
+        for line in lines:
+            split_line = line.rstrip().split('\t')
+            error_word = split_line[0]
+            correct_word = split_line[1]
+            if len(error_word) < len(correct_word):
+                # This can only be a result of deletion (xy typed as x):
+                error_entry = self.find_deletion_error(error_word, correct_word)
+                error_type = 'deletion'
+            elif len(error_word) > len(correct_word):
+                # This can only be a result of insertion (x typed as xy):
+                # The insertion error can be calculated as a deletion error where the deleted letter is in the error_word:
+                error_entry = self.find_deletion_error(correct_word, error_word)
+                error_type = 'insertion'
+            else:
+                # This can be either a result of substitution (x typed as y) or transposition (xy typed as yx):
+                error_type = None
+                error_entry = None
+            if error_type is not None:
+                if error_entry not in error_tables[error_type].keys():
+                    error_tables[error_type][error_entry] = 1
+                else:
+                    error_tables[error_type][error_entry] += 1
+            print(split_line)
+        raise Exception('Need to implement this function')
+        return error_tables
+
+    def initialize_empty_error_tables(self):
+        """ Returns a dictionary representing an empty error_table dictionary.
+
+            Returns:
+                dict. The dictionary is in the format returned by learn_error_tables,
+                but with 0 as the count of each entry.
+        """
+        insertion_table = self.initialize_empty_confusion_matrix()
+        deletion_table = self.initialize_empty_confusion_matrix()
+        substitution_table = self.initialize_empty_confusion_matrix()
+        transposition_table = self.initialize_empty_confusion_matrix()
+        error_tables = {'insertion': insertion_table,
+                        'deletion': deletion_table,
+                        'substitution': substitution_table,
+                        'transposition': transposition_table}
+
+        return error_tables
+
+    def initialize_empty_confusion_matrix(self):
+        """ Returns a dictionary representing an empty confusion matrix over all letters in the english language.
+
+            Returns:
+                dict. The confusion matrix in the format of: {str: int},
+                where str is an entry 'xy', and the result int is 0.
+        """
+        letters = 'abcdefghijklmnopqrstuvwxyz'
+        confusion_matrix = {}
+        for l1 in letters:
+            for l2 in letters:
+                entry = l1 + l2
+                confusion_matrix[entry] = 0
+        return confusion_matrix
+
+    def find_deletion_error(self, short_word, long_word):
+        """ Finds the deleted letter from the long_word.
+
+            Args:
+                short_word (str): the shorter word which have a deleted letter.
+                long_word (str): the longer word which have all of the letters.
+
+            Returns:
+                str. The error entry of the deletion.
+        """
+        deletion_index = None
+        for i in range(len(short_word)):
+            error_letter = short_word[i]
+            correct_letter = long_word[i]
+            if error_letter != correct_letter:
+                # Found the deletion:
+                deletion_index = i
+                break
+        if deletion_index is None:
+            deletion_index = len(long_word) - 1  # if we haven't found the difference, it must be the last letter.
+        if deletion_index == 0:
+            error_entry = '#' + long_word[deletion_index]
+        else:
+            error_entry = long_word[deletion_index - 1:deletion_index + 1]
+        return error_entry
 
     def add_error_tables(self, error_tables):
         """ Adds the speficied dictionary of error tables as an instance variable.
@@ -91,7 +214,7 @@ class Spell_Checker:
            Returns:
                Float. The float should reflect the (log) probability.
         """
-        return self.lm.evaluate()
+        return self.lm.evaluate(text)
 
     def spell_check(self, text, alpha):
         """ Returns the most probable fix for the specified text. Use a simple
@@ -105,6 +228,51 @@ class Spell_Checker:
             Return:
                 A modified string (or a copy of the original if no corrections are made.)
         """
+        nt = normalize_text(text)
+        alpha_log = math.log(alpha)
+        one_minus_alpha_log = math.log(1 - alpha)
+        split_text = nt.split(' ')
+        max_prob = None
+        max_sentence = None
+        for i, word in enumerate(split_text):
+            all_edits = self.get_all_edits(word)
+            for edited_word, prob in all_edits:
+                sentence, sentence_prob = self.try_sentence_in_lm(split_text, i, edited_word, prob + one_minus_alpha_log)
+                if max_prob is None or max_prob < sentence_prob:
+                    max_prob = sentence_prob
+                    max_sentence = sentence
+
+            # This can be done once outside of the for loop, but it is done here to reflect the formula from the class:
+            original_word_sentence, sentence_prob = self.try_sentence_in_lm(split_text, i, word, alpha_log)
+            if max_prob is None or max_prob < sentence_prob:
+                max_prob = sentence_prob
+                max_sentence = original_word_sentence
+        return max_sentence
+
+    def try_sentence_in_lm(self, split_text, i, edited_word, edit_prob):
+        """ Calculates the probability of the new sentence to occur in the language model,
+            given the edited word and the edit's probability
+
+            Args:
+                split_text (list): the original text in a list form, so that it will be easy
+                    to replace the original word with it's edited word.
+                i (int): the index of the word we wish to replace.
+                edited_word (str): the edited word we wish to use in the new sentence.
+                edit_prob (float): the log-probability of the edit to occur.
+
+            Return:
+                tuple. The tuple shall be in the following form: (sentence, sentence_prob)
+        """
+        copy_of_list = []
+        for j, word in enumerate(split_text):
+            if i == j:
+                copy_of_list.append(edited_word)
+            else:
+                copy_of_list.append(word)
+        sentence = " ".join(copy_of_list)
+        prob_sentence = self.evaluate(sentence)
+        total_probability = prob_sentence + edit_prob  # adding two log-probabilities
+        return sentence, total_probability
 
     def get_all_edits(self, word):
         """ Returns all of the possible edits that are in maximum 2-edit distance from the original word.
@@ -115,16 +283,37 @@ class Spell_Checker:
             Return:
                 set. All of the possible edits that are in maximum 2-edit distance from the original word.
                 The format of the edit shall be a tuple of: (edited_word, prob),
-                where prob is the probability of this error to occur.
+                where prob is the log-probability of this error to occur.
                 Note:
                     this set will contain only real words from the language-model's dictionary.
         """
         edits1 = self.edits1(word)
-        all_edits = self.edits2(edits1)
-        return self.check_if_real_word(all_edits)
+        # If it is a 2-letter word, than a 2-edit distance edit could just make it be any 2-letter word.
+        # I will only check 2-edit distance of words with more than 2 letters:
+        if len(word) > 2:
+            all_edits = self.edits2(edits1)
+        else:
+            all_edits = edits1
+        return self.keep_only_real_words(all_edits)
 
-    def check_if_real_word(self, all_edits):
-        raise Exception("Need to complete this function.")
+    def keep_only_real_words(self, all_edits):
+        """ Returns all of the tuples which are of real vocabulary words.
+
+            Args:
+                all_edits (set): a set of all of the tuples to filter from.
+
+            Return:
+                set. All the filtered tuples which are of real vocabulary words.
+                The format of the tuple shall be: (edited_word, prob),
+                where prob is the log-probability of this error to occur.
+                Note:
+                    this set will contain only real words from the language-model's dictionary.
+        """
+        only_real_words = set()
+        for edited_word, prob in all_edits:
+            if edited_word and edited_word in self.vocabulary:
+                only_real_words.add((edited_word, prob))
+        return only_real_words
 
     def edits1(self, word):
         """ Returns all of the possible edits that are in 1-edit distance from the original word.
@@ -135,9 +324,9 @@ class Spell_Checker:
             Return:
                 set. All of the possible edits that are in 1-edit distance from the original word.
                 The format of the edit shall be a tuple of: (edited_word, prob),
-                where prob is the probability of this error to occur.
+                where prob is the log-probability of this error to occur.
         """
-        letters = 'abcdefghijklmnopqrstuvwxyz'
+        letters = 'abcdefghijklmnopqrstuvwxyz '
         splits = [(word[:i], word[i:]) for i in range(len(word) + 1)]
 
         insertions = [self.get_insertion(L, R) for L, R in splits if R]
@@ -159,11 +348,12 @@ class Spell_Checker:
             Return:
                 set. All of the possible edits that are in maximum 2-edit distance from the original word.
                 The format of the edit shall be a tuple of: (edited_word, prob),
-                where prob is the probability of this error to occur.
+                where prob is the log-probability of this error to occur.
                 Note:
                     this set shall contain both types of edits, 1-edit distance and 2-edit distance.
         """
-        all_edits2 = set((e2, prob1 * prob2) for e1, prob1 in edits1 for e2, prob2 in self.edits1(e1))
+        # Add both log-probabilities, because log(prob1 * prob2) = log(prob1) + log(prob2):
+        all_edits2 = set((e2, prob1 + prob2) for e1, prob1 in edits1 for e2, prob2 in self.edits1(e1))
         # Take all edits into consideration:
         all_edits = edits1.union(all_edits2)
         only_best_prob_edits = self.get_only_best_prob_edits(all_edits)
@@ -180,7 +370,7 @@ class Spell_Checker:
             Return:
                 A tuple in the following format: (edited_word, prob),
                 where edited_word is the word created by this edit,
-                and prob is the probability of this edit to occur.
+                and prob is the log-probability of this edit to occur.
         """
         if L:
             # if the left side of the word has at least one letter in it, take the last one in it:
@@ -201,7 +391,7 @@ class Spell_Checker:
             Return:
                 A tuple in the following format: (edited_word, prob),
                 where edited_word is the word created by this edit,
-                and prob is the probability of this edit to occur.
+                and prob is the log-probability of this edit to occur.
         """
         if L:
             # if the left side of the word has at least one letter in it, take the last one in it:
@@ -223,7 +413,7 @@ class Spell_Checker:
             Return:
                 A tuple in the following format: (edited_word, prob),
                 where edited_word is the word created by this edit,
-                and prob is the probability of this edit to occur.
+                and prob is the log-probability of this edit to occur.
         """
         edit_entry = c + R[0]
         return L + c + R[1:], self.get_prob_substitution(edit_entry)
@@ -239,7 +429,7 @@ class Spell_Checker:
             Return:
                 A tuple in the following format: (edited_word, prob),
                 where edited_word is the word created by this edit,
-                and prob is the probability of this edit to occur.
+                and prob is the log-probability of this edit to occur.
         """
         edit_entry = R[1] + R[0]
         return L + R[1] + R[0] + R[2:], self.get_prob_transposition(edit_entry)
@@ -251,7 +441,7 @@ class Spell_Checker:
                 edit_entry (str): the exact error that has occurred (two letters that represents the edit)
 
             Return:
-                float. The probability of the error to occur.
+                float. The log-probability of the error to occur.
         """
         return self.get_prob_edit('insertion', edit_entry)
 
@@ -262,7 +452,7 @@ class Spell_Checker:
                 edit_entry (str): the exact error that has occurred (two letters that represents the edit)
 
             Return:
-                float. The probability of the error to occur.
+                float. The log-probability of the error to occur.
         """
         return self.get_prob_edit('deletion', edit_entry)
 
@@ -273,7 +463,7 @@ class Spell_Checker:
                 edit_entry (str): the exact error that has occurred (two letters that represents the edit)
 
             Return:
-                float. The probability of the error to occur.
+                float. The log-probability of the error to occur.
         """
         return self.get_prob_edit('substitution', edit_entry)
 
@@ -284,7 +474,7 @@ class Spell_Checker:
                 edit_entry (str): the exact error that has occurred (two letters that represents the edit)
 
             Return:
-                float. The probability of the error to occur.
+                float. The log-probability of the error to occur.
         """
         return self.get_prob_edit('transposition', edit_entry)
 
@@ -297,10 +487,13 @@ class Spell_Checker:
                 edit_entry (str): the exact error that has occurred (two letters that represents the edit)
 
             Return:
-                float. The probability of the error to occur.
+                float. The log-probability of the error to occur.
         """
-        raise Exception('Need to calculate the probability and not the count')
-        return self.error_tables[error_type][edit_entry]
+        if edit_entry not in self.error_tables[error_type] or self.error_tables[error_type][edit_entry] == 0 or edit_entry not in self.denominator_error_tables:
+            return math.log(1)  # return this edit with an extremely low probability
+        probability = self.error_tables[error_type][edit_entry] / self.denominator_error_tables[edit_entry]
+        log_prob = math.log(probability)
+        return log_prob
 
     def get_only_best_prob_edits(self, all_edits):
         """ Keeps only the edits with the highest probability from the given set of edits
@@ -311,7 +504,7 @@ class Spell_Checker:
             Return:
                 set. The subset of edits, containing only the best probability for each edited word.
         """
-        # Create a dictionary containing the max probability found for each word in the given set:
+        # Create a dictionary containing the max log-probability found for each word in the given set:
         only_best_prob_edits_dict = {}
         for edit, prob in all_edits:
             if edit not in only_best_prob_edits_dict.keys():
