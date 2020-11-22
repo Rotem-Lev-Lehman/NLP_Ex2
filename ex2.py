@@ -66,19 +66,27 @@ class Spell_Checker:
             (Replaces an older denominator table if set)
         """
         all_ngrams_dict = self.lm.get_model()
-        self.denominator_error_tables = {}
+        # The denominator could be a combination of 1 or 2 letters count in the corpus.
+        # Special case of #, it will be the amount of words,
+        # (because it will mean 'how many times was there a start of a word?'):
+        self.denominator_error_tables = {'one_letter': {'#': 0}, 'two_letters': {}}
         for ngram, count in all_ngrams_dict.items():
             split_words = ngram.split(' ')
             for word in split_words:
                 # The first letter in the word is also counted, and we check how many times a word starts with that letter:
                 prev_letter = '#'
+                self.denominator_error_tables['one_letter'][prev_letter] += count  # count the amount of words.
                 for letter in word:
+                    if letter not in self.denominator_error_tables['one_letter'].keys():
+                        self.denominator_error_tables['one_letter'][letter] = 0
+                    self.denominator_error_tables['one_letter'][letter] += count
+
                     curr_entry = prev_letter + letter
                     # If we have not yet seen this entry before, add it to the dictionary:
-                    if curr_entry not in self.denominator_error_tables.keys():
-                        self.denominator_error_tables[curr_entry] = 0
+                    if curr_entry not in self.denominator_error_tables['two_letters'].keys():
+                        self.denominator_error_tables['two_letters'][curr_entry] = 0
                     # This entry occurred at least <count> times, because this entire ngram has occurred <count> times:
-                    self.denominator_error_tables[curr_entry] += count
+                    self.denominator_error_tables['two_letters'][curr_entry] += count
                     # Update the prev letter to be this letter:
                     prev_letter = letter
 
@@ -110,7 +118,7 @@ class Spell_Checker:
         with open(errors_file, 'r') as f:
             lines = f.readlines()
         for line in lines:
-            split_line = line.rstrip().split('\t')
+            split_line = line.rstrip().lower().split('\t')
             error_word = split_line[0]
             correct_word = split_line[1]
             if len(error_word) < len(correct_word):
@@ -480,7 +488,7 @@ class Spell_Checker:
             Return:
                 float. The log-probability of the error to occur.
         """
-        return self.get_prob_edit('insertion', edit_entry)
+        return self.get_prob_edit('insertion', edit_entry, 'one_letter', edit_entry[0])
 
     def get_prob_deletion(self, edit_entry):
         """ Returns the probability for a deletion error to occur.
@@ -491,7 +499,7 @@ class Spell_Checker:
             Return:
                 float. The log-probability of the error to occur.
         """
-        return self.get_prob_edit('deletion', edit_entry)
+        return self.get_prob_edit('deletion', edit_entry, 'two_letters', edit_entry)
 
     def get_prob_substitution(self, edit_entry):
         """ Returns the probability for a substitution error to occur.
@@ -502,7 +510,7 @@ class Spell_Checker:
             Return:
                 float. The log-probability of the error to occur.
         """
-        return self.get_prob_edit('substitution', edit_entry)
+        return self.get_prob_edit('substitution', edit_entry, 'one_letter', edit_entry[1])
 
     def get_prob_transposition(self, edit_entry):
         """ Returns the probability for a transposition error to occur.
@@ -513,22 +521,29 @@ class Spell_Checker:
             Return:
                 float. The log-probability of the error to occur.
         """
-        return self.get_prob_edit('transposition', edit_entry)
+        return self.get_prob_edit('transposition', edit_entry, 'two_letters', edit_entry)
 
-    def get_prob_edit(self, error_type, edit_entry):
+    def get_prob_edit(self, error_type, edit_entry, denominator_type, denominator_entry):
         """ Returns the probability for an error to occur.
 
             Args:
                 error_type (str): the type of error that happened.
                     Can be one of the following: ['insertion' / 'deletion' / 'substitution' / 'transposition']
                 edit_entry (str): the exact error that has occurred (two letters that represents the edit)
+                denominator_type (str): the type of denominator that this error will use.
+                    Can be one of the following: ['one_letter' / 'two_letters']
+                denominator_entry (str): the entry to the denominator. It differs in every type of error.
 
             Return:
                 float. The log-probability of the error to occur.
         """
-        if edit_entry not in self.error_tables[error_type] or self.error_tables[error_type][edit_entry] == 0 or edit_entry not in self.denominator_error_tables:
-            return math.log(1)  # return this edit with an extremely low probability
-        probability = self.error_tables[error_type][edit_entry] / self.denominator_error_tables[edit_entry]
+        if denominator_entry not in self.denominator_error_tables[denominator_type]:
+            return math.log(1)
+        # Smoothing:
+        if edit_entry not in self.error_tables[error_type] or self.error_tables[error_type][edit_entry] == 0:
+            # return math.log(1 / (len(self.denominator_error_tables[denominator_type]) + 1))
+            return math.log(1 / self.denominator_error_tables[denominator_type][denominator_entry])
+        probability = self.error_tables[error_type][edit_entry] / self.denominator_error_tables[denominator_type][denominator_entry]
         log_prob = math.log(probability)
         return log_prob
 
