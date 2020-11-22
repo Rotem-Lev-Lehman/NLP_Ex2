@@ -158,6 +158,10 @@ class Spell_Checker:
     def initialize_empty_confusion_matrix(self, with_start_word_letters=True):
         """ Returns a dictionary representing an empty confusion matrix over all letters in the english language.
 
+            Args:
+                with_start_word_letters (bool): indicates if we want a start-of-word letters in the confusion-matrix.
+                    Defaults to True (using it as True only in insertion and deletion).
+
             Returns:
                 dict. The confusion matrix in the format of: {str: int},
                 where str is an entry 'xy', and the result int is 0.
