@@ -133,11 +133,8 @@ class Spell_Checker:
             else:
                 # This can be either a result of substitution (x typed as y) or transposition (xy typed as yx):
                 error_type, error_entry = self.find_substitution_or_transposition(error_word, correct_word)
-            if error_type is not None:
-                if error_entry not in error_tables[error_type].keys():
-                    error_tables[error_type][error_entry] = 1
-                else:
-                    error_tables[error_type][error_entry] += 1
+            if error_entry in error_tables[error_type].keys():  # only insert allowed entries ('xy' or '#x')
+                error_tables[error_type][error_entry] += 1
         return error_tables
 
     def initialize_empty_error_tables(self):
@@ -147,10 +144,10 @@ class Spell_Checker:
                 dict. The dictionary is in the format returned by learn_error_tables,
                 but with 0 as the count of each entry.
         """
-        insertion_table = self.initialize_empty_confusion_matrix()
-        deletion_table = self.initialize_empty_confusion_matrix()
-        substitution_table = self.initialize_empty_confusion_matrix()
-        transposition_table = self.initialize_empty_confusion_matrix()
+        insertion_table = self.initialize_empty_confusion_matrix(with_start_word_letters=True)
+        deletion_table = self.initialize_empty_confusion_matrix(with_start_word_letters=True)
+        substitution_table = self.initialize_empty_confusion_matrix(with_start_word_letters=False)
+        transposition_table = self.initialize_empty_confusion_matrix(with_start_word_letters=False)
         error_tables = {'insertion': insertion_table,
                         'deletion': deletion_table,
                         'substitution': substitution_table,
@@ -158,7 +155,7 @@ class Spell_Checker:
 
         return error_tables
 
-    def initialize_empty_confusion_matrix(self):
+    def initialize_empty_confusion_matrix(self, with_start_word_letters=True):
         """ Returns a dictionary representing an empty confusion matrix over all letters in the english language.
 
             Returns:
@@ -171,6 +168,9 @@ class Spell_Checker:
             for l2 in letters:
                 entry = l1 + l2
                 confusion_matrix[entry] = 0
+            if with_start_word_letters:
+                entry_start_of_word = '#' + l1
+                confusion_matrix[entry_start_of_word] = 0
         return confusion_matrix
 
     def find_deletion_error(self, short_word, long_word):
@@ -347,15 +347,6 @@ class Spell_Checker:
         """
         only_real_words = set()
         for edited_word, prob in all_edits:
-            if ' ' in edited_word:
-                split_word = edited_word.split(' ')
-                flag_spaced_word = True
-                for word in split_word:
-                    if not word or word not in self.vocabulary:
-                        flag_spaced_word = False
-                        break
-                if flag_spaced_word:
-                    only_real_words.add((edited_word, prob))
             if edited_word and edited_word in self.vocabulary:
                 only_real_words.add((edited_word, prob))
         return only_real_words
@@ -371,7 +362,7 @@ class Spell_Checker:
                 The format of the edit shall be a tuple of: (edited_word, prob),
                 where prob is the log-probability of this error to occur.
         """
-        letters = 'abcdefghijklmnopqrstuvwxyz '
+        letters = 'abcdefghijklmnopqrstuvwxyz'
         splits = [(word[:i], word[i:]) for i in range(len(word) + 1)]
 
         insertions = [self.get_insertion(L, R) for L, R in splits if R]
